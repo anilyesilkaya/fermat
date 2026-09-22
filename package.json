@@ -1,0 +1,45 @@
+{
+  "name": "fermat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Free browser app for collecting PDFs, writing margin notes, and exporting readings as independent static-site assets.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0 || >=24"
+  },
+  "scripts": {
+    "predev": "npm run build:viewer && npm run prepare:viewer",
+    "dev": "vite",
+    "build:viewer": "vite build --config vite.viewer.config.ts",
+    "prepare:viewer": "node scripts/prepare-viewer.mjs",
+    "build:author": "vite build --config vite.config.ts",
+    "build": "tsc --noEmit && npm run build:viewer && npm run prepare:viewer && npm run build:author",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "serve:example": "vite preview --outDir examples --port 5055 --strictPort"
+  },
+  "dependencies": {
+    "dompurify": "3.4.15",
+    "fflate": "0.8.3",
+    "idb": "8.0.3",
+    "katex": "0.18.7",
+    "marked": "18.0.13",
+    "pdfjs-dist": "6.3.289",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/katex": "0.16.8",
+    "@types/node": "24.4.0",
+    "fake-indexeddb": "6.2.5",
+    "happy-dom": "20.14.5",
+    "jsdom": "30.0.1",
+    "typescript": "5.8.3",
+    "vite": "8.3.0",
+    "vitest": "5.0.0"
+  }
+}
