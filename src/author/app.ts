@@ -99,15 +99,7 @@ export class AuthorApp {
     importBtn.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', () => void this.onImportFiles(fileInput.files));
 
-    const restoreBtn = this.button('Restore backup…', 'fa-btn');
-    const restoreInput = this.doc.createElement('input');
-    restoreInput.type = 'file';
-    restoreInput.accept = '.zip,application/zip';
-    restoreInput.style.display = 'none';
-    restoreBtn.addEventListener('click', () => restoreInput.click());
-    restoreInput.addEventListener('change', () => void this.onRestore(restoreInput.files));
-
-    actions.append(importBtn, fileInput, restoreBtn, restoreInput);
+    actions.append(importBtn, fileInput);
 
     this.sidebarList = this.el('ul', 'fa-list') as HTMLUListElement;
     sidebar.append(brand, actions, this.sidebarList);
@@ -164,13 +156,6 @@ export class AuthorApp {
     }
     await this.refreshCollection();
     if (firstImported) await this.openDocument(firstImported);
-  }
-
-  private async onRestore(files: FileList | null): Promise<void> {
-    // Project restore is handled by the export module's importProject; wiring is
-    // intentionally minimal here and surfaced as a clear message if unavailable.
-    if (!files || files.length === 0) return;
-    this.showError('Backup restore UI is not wired in this build yet.');
   }
 
   // --- document view ------------------------------------------------------
