@@ -1,0 +1,102 @@
+{
+  "$comment": "Source of truth for the demo bookshelf. scripts/gen-example-pdfs.py draws each PDF and emits exact glyph geometry; scripts/build-examples.mjs assembles the self-contained readers + bookshelf from the built viewer bundle. Coordinates are PDF points (origin bottom-left, y up).",
+  "pageSize": [612, 792],
+  "readings": [
+    {
+      "slug": "endianness",
+      "title": "A Short Note on Endianness",
+      "byline": "Fermat demo reading",
+      "pages": [
+        {
+          "lines": [
+            { "x": 72, "y": 720, "size": 20, "font": "Helvetica-Bold", "text": "A Short Note on Endianness" },
+            { "x": 72, "y": 688, "size": 11, "font": "Helvetica", "text": "Byte order decides how a multibyte integer is laid out in memory." },
+            { "id": "big-endian", "x": 72, "y": 668, "size": 11, "font": "Helvetica", "text": "Big-endian stores the most significant byte at the lowest address." },
+            { "x": 72, "y": 648, "size": 11, "font": "Helvetica", "text": "Little-endian stores the least significant byte first, as x86 does." },
+            { "x": 72, "y": 616, "size": 11, "font": "Helvetica", "text": "Network protocols standardise on big-endian, called network order." },
+            { "x": 72, "y": 596, "size": 11, "font": "Helvetica", "text": "So htonl and ntohl convert between host order and that convention." }
+          ]
+        },
+        {
+          "lines": [
+            { "x": 72, "y": 720, "size": 16, "font": "Helvetica-Bold", "text": "Why it bites you" },
+            { "id": "serialise", "x": 72, "y": 688, "size": 11, "font": "Helvetica", "text": "Serialising a struct with raw memcpy bakes in the writer's byte order." },
+            { "x": 72, "y": 668, "size": 11, "font": "Helvetica", "text": "A reader on the other endianness then decodes every field backwards." },
+            { "x": 72, "y": 636, "size": 11, "font": "Helvetica", "text": "The fix is an explicit wire format, not a mirror of process memory." }
+          ]
+        }
+      ],
+      "notes": [
+        {
+          "id": "a1a1a1a1-1111-4111-8111-111111111111",
+          "page": 0,
+          "kind": "text",
+          "line": "big-endian",
+          "color": "#ffe066",
+          "tags": ["memory", "definition"],
+          "body": "**Big-endian** = most-significant byte first. Handy mnemonic: it reads left-to-right like we do. See [the next page](#page=2)."
+        },
+        {
+          "id": "a2a2a2a2-2222-4222-8222-222222222222",
+          "page": 1,
+          "kind": "text",
+          "line": "serialise",
+          "color": "#a0e7a0",
+          "tags": ["pitfall"],
+          "body": "This is the actual bug: `memcpy` of a struct is *not* a portable wire format. Inline math works too, e.g. $2^{32}-1$."
+        }
+      ]
+    },
+    {
+      "slug": "reading-offline",
+      "title": "Reading PDFs Offline",
+      "byline": "Fermat demo reading",
+      "pages": [
+        {
+          "lines": [
+            { "x": 72, "y": 720, "size": 20, "font": "Helvetica-Bold", "text": "Reading PDFs Offline" },
+            { "id": "self-contained", "x": 72, "y": 688, "size": 11, "font": "Helvetica", "text": "A published reading is a self-contained folder of static files." },
+            { "x": 72, "y": 668, "size": 11, "font": "Helvetica", "text": "It loads only local assets and never contacts a remote origin." },
+            { "x": 72, "y": 648, "size": 11, "font": "Helvetica", "text": "Drop it at any nested path on any static host and it just works." }
+          ]
+        },
+        {
+          "lines": [
+            { "x": 72, "y": 720, "size": 16, "font": "Helvetica-Bold", "text": "Three kinds of note" },
+            { "x": 72, "y": 688, "size": 11, "font": "Helvetica", "text": "Highlights sit on selected text; regions box a figure; points pin a spot." },
+            { "x": 72, "y": 640, "size": 11, "font": "Helvetica", "text": "The panel below is a region; the marker to its right is a point note." }
+          ]
+        }
+      ],
+      "notes": [
+        {
+          "id": "b1b1b1b1-1111-4111-8111-111111111111",
+          "page": 0,
+          "kind": "text",
+          "line": "self-contained",
+          "color": "#ffe066",
+          "tags": ["export"],
+          "body": "The core contract: **no runtime dependency** on the app domain or any CDN."
+        },
+        {
+          "id": "b2b2b2b2-2222-4222-8222-222222222222",
+          "page": 1,
+          "kind": "region",
+          "rect": [72, 560, 320, 620],
+          "color": "#b0d0ff",
+          "tags": ["figure"],
+          "body": "A **region note** boxes an area — use it for figures or scanned pages with no selectable text."
+        },
+        {
+          "id": "b3b3b3b3-3333-4333-8333-333333333333",
+          "page": 1,
+          "kind": "point",
+          "point": [360, 590],
+          "color": "#ff9d9d",
+          "tags": [],
+          "body": "A **point note** pins a single spot."
+        }
+      ]
+    }
+  ]
+}

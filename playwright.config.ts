@@ -37,5 +37,13 @@ export default defineConfig({
       reuseExistingServer: !process.env['CI'],
       timeout: 60_000,
     },
+    {
+      // Static host for the generated demo bookshelf (examples/), a stand-in for
+      // GitHub Pages: plain files, no rewrites.
+      command: 'node tests/static-server.mjs 5200 examples',
+      port: 5200,
+      reuseExistingServer: !process.env['CI'],
+      timeout: 60_000,
+    },
   ],
 });

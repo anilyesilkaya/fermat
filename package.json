@@ -20,7 +20,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "serve:example": "vite preview --outDir examples --port 5055 --strictPort"
+    "build:examples": "npm run build:viewer && npm run prepare:viewer && node scripts/build-examples.mjs",
+    "serve:examples": "node tests/static-server.mjs 5055 examples"
   },
   "dependencies": {
     "dompurify": "3.4.15",
