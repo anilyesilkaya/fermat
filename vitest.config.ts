@@ -19,7 +19,7 @@ export default defineConfig({
     // happy-dom for the DOM-touching tests (sanitizer, margin layout);
     // pure transform/model tests need no DOM but the env is cheap to share.
     environment: 'happy-dom',
-    include: ['tests/**/*.test.ts', 'src/**/*.test.ts'],
+    include: ['tests/**/*.test.ts', 'src/**/*.test.ts', 'examples/**/*.test.ts'],
     exclude: ['tests/e2e/**', 'node_modules/**'],
     coverage: {
       provider: 'v8',

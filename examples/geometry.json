@@ -1,0 +1,45 @@
+{
+  "pageSize": [
+    612,
+    792
+  ],
+  "readings": {
+    "endianness": {
+      "pageCount": 2,
+      "lines": {
+        "big-endian": {
+          "page": 0,
+          "box": [
+            72,
+            665.72,
+            388.7,
+            675.9
+          ]
+        },
+        "serialise": {
+          "page": 1,
+          "box": [
+            72,
+            685.72,
+            405.42,
+            695.9
+          ]
+        }
+      }
+    },
+    "reading-offline": {
+      "pageCount": 2,
+      "lines": {
+        "self-contained": {
+          "page": 0,
+          "box": [
+            72,
+            685.72,
+            358.13,
+            695.9
+          ]
+        }
+      }
+    }
+  }
+}
