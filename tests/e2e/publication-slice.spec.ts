@@ -36,7 +36,10 @@ test('publish a reading and serve it self-contained from a second origin', async
   // The document opens; its pages render.
   await expect(page.locator('.fa-page').first()).toBeVisible({ timeout: 30_000 });
 
-  // 2) Create a text note by selecting a line in the first page's text layer.
+  // 2) Create a text note: pick the Highlight tool, then select a line in the
+  //    first page's text layer (the text layer is only interactive in Highlight
+  //    mode, so tools never conflict).
+  await page.locator('.fa-tool[data-tool="highlight"]').click();
   const line = page.locator('.fa-textlayer span', { hasText: 'selectable line' }).first();
   await expect(line).toBeVisible({ timeout: 30_000 });
   await line.dblclick(); // selects a word/line

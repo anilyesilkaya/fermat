@@ -55,6 +55,8 @@ export class NoteSaveController {
   private draftTimer: unknown = null;
   private pendingEdit: AnnotationEdit = {};
   private _state: SaveState = 'idle';
+  /** In-flight commit, so rapid triggers serialize instead of self-racing. */
+  private inflight: Promise<Annotation> | null = null;
   private readonly documentId: string;
   private readonly debounceMs: number;
   private readonly timer: Timer;
@@ -131,8 +133,26 @@ export class NoteSaveController {
    * Commit the pending edit to storage with optimistic concurrency. On success
    * the controller advances to the new revision and clears the draft. On a
    * revision conflict it keeps the draft and enters 'conflict' state.
+   *
+   * Commits are SERIALIZED: if one is already in flight (e.g. a checkbox change
+   * and a textarea blur fire back-to-back), the next commit chains after it and
+   * commits against the freshly-advanced revision — two of our own writes never
+   * self-conflict. A conflict here therefore only ever reflects a genuine
+   * external writer (another tab).
    */
-  async commit(): Promise<Annotation> {
+  commit(): Promise<Annotation> {
+    const run = (this.inflight ?? Promise.resolve()).catch(() => undefined).then(() =>
+      this.commitOnce(),
+    );
+    // Track only successful settle for chaining; failures don't block the queue.
+    this.inflight = run;
+    void run.catch(() => undefined).finally(() => {
+      if (this.inflight === run) this.inflight = null;
+    });
+    return run;
+  }
+
+  private async commitOnce(): Promise<Annotation> {
     if (this.draftTimer !== null) {
       this.timer.clear(this.draftTimer);
       this.draftTimer = null;
@@ -142,17 +162,26 @@ export class NoteSaveController {
       return this.current;
     }
     const base = this.current;
-    const next = nextAnnotationRevision(base, this.pendingEdit, nowIso());
+    // Snapshot the edit being committed and reset pendingEdit to a FRESH object,
+    // so any edit that arrives during the `await` below (e.g. a checkbox change
+    // firing while a textarea-blur commit is in flight) accumulates separately
+    // and is NOT clobbered when this commit clears its own work.
+    const editing = this.pendingEdit;
+    this.pendingEdit = {};
+    const next = nextAnnotationRevision(base, editing, nowIso());
     this.setState('saving');
     try {
       await saveAnnotation(next, base.revision);
       this.current = next;
-      this.pendingEdit = {};
       await clearDraft(next.id);
-      this.setState('saved');
+      // If new edits landed while we were saving, we're still dirty — the next
+      // serialized commit will pick them up against this freshly-bumped revision.
+      this.setState(this.hasPendingChanges() ? 'dirty' : 'saved');
       this.onCommitted?.(next);
       return next;
     } catch (err) {
+      // Restore the attempted edit (under any newer edit) so it isn't lost.
+      this.pendingEdit = { ...editing, ...this.pendingEdit };
       if (err instanceof RevisionConflictError) {
         // Preserve the user's text as a draft; do NOT overwrite the newer value.
         await this.flushDraft().catch(() => undefined);

@@ -1,4 +1,4 @@
-import type { Annotation, DocumentMeta } from '../model/schema';
+import type { Annotation, Anchor, DocumentMeta } from '../model/schema';
 import { PdfDocument, type PageInfo } from '../pdf/document';
 import type { Viewport } from '../pdf/transforms';
 import { canvasBackingSize } from '../pdf/transforms';
@@ -26,20 +26,35 @@ import { NoteSaveController, type SaveState } from './save-controller';
 import { publishReader, backupProject, runPreflight } from './publish';
 import { ensureAuthorStyles } from './styles';
 import { downloadBytes } from './download';
+import {
+  TOOLS,
+  DEFAULT_TOOL,
+  toolMeta,
+  armedGesture,
+  isToolAvailable,
+  toolForShortcut,
+  type AuthorTool,
+} from './tool';
 
 /**
  * The authoring application controller (DOM).
  *
  * Ties the tested pure/storage modules into a working UI: a collection sidebar,
  * PDF import, per-page rendering with a live text layer for selection, note
- * creation (text/region/point), a margin editor with debounced drafts +
- * revision-safe commits, and publish/backup/export actions.
+ * creation (text/region/point) driven by an explicit tool (see ./tool), a
+ * margin editor with debounced drafts + revision-safe commits, and
+ * publish/backup/export actions.
  *
  * All correctness-critical logic (anchors, revisions, projection, export) lives
- * in the tested modules; this file is orchestration + DOM wiring.
+ * in the tested modules; this file is orchestration + DOM wiring. The choice of
+ * which gesture creates which note kind is delegated to the pure tool model, so
+ * this layer only asks "what gesture is armed?" and never guesses from geometry.
  */
 
 const CSS_ZOOM = 1.35;
+
+/** Preset note colors offered in the editor (first is the default). */
+const NOTE_COLORS = ['#ffe066', '#8ce99a', '#74c0fc', '#ffa8a8', '#e599f7'] as const;
 
 export class AuthorApp {
   private readonly doc: Document;
@@ -54,7 +69,19 @@ export class AuthorApp {
   private controllers = new Map<string, NoteSaveController>();
   private pageViewports: Viewport[] = [];
   private pageInfos: PageInfo[] = [];
+  private pageHasText: boolean[] = [];
   private dpr: number;
+
+  /** The active authoring tool; decides which gesture creates which note kind. */
+  private tool: AuthorTool = DEFAULT_TOOL;
+  /** Color applied to the next created note (last color the author picked). */
+  private lastColor: string = NOTE_COLORS[0];
+  /** Id of the most recently created note, for single-level undo. */
+  private lastCreatedId: string | null = null;
+  /** Toolbar tool buttons, kept for active/disabled state updates. */
+  private toolButtons = new Map<AuthorTool, HTMLButtonElement>();
+  private hintBar: HTMLElement | null = null;
+  private keyHandler: ((ev: KeyboardEvent) => void) | null = null;
 
   constructor(container: HTMLElement) {
     this.doc = container.ownerDocument;
@@ -74,6 +101,7 @@ export class AuthorApp {
   async init(): Promise<void> {
     await requestPersistentStorage();
     this.renderShell();
+    this.installKeyboard();
     await this.refreshCollection();
   }
 
@@ -208,27 +236,122 @@ export class AuthorApp {
     const toolbar = this.el('div', 'fa-toolbar');
     const name = this.el('span', 'fa-doc-name');
     name.textContent = meta.title;
+    const tools = this.buildToolGroup();
     const spacer = this.el('div', 'fa-spacer');
     const publishBtn = this.button('Publish reader…', 'fa-btn fa-btn-primary');
     publishBtn.addEventListener('click', () => void this.onPublish());
     const backupBtn = this.button('Back up project', 'fa-btn');
     backupBtn.addEventListener('click', () => void this.onBackup());
-    toolbar.append(name, spacer, publishBtn, backupBtn);
+    toolbar.append(name, tools, spacer, publishBtn, backupBtn);
     this.main.appendChild(toolbar);
+
+    // Active-tool hint bar.
+    this.hintBar = this.el('div', 'fa-hint');
+    this.main.appendChild(this.hintBar);
 
     const pages = this.el('div', 'fa-pages');
     this.main.appendChild(pages);
 
     this.pageViewports = [];
     this.pageInfos = [];
+    this.pageHasText = [];
+    this.toolButtons.clear();
+    this.tool = DEFAULT_TOOL;
     for (let i = 0; i < pdf.pageCount; i++) {
       const info = await pdf.pageInfo(i);
       const viewport = await pdf.viewport(i, CSS_ZOOM);
       this.pageInfos.push(info);
       this.pageViewports.push(viewport);
+      this.pageHasText.push(false);
       const pageEl = await this.renderPage(i, viewport);
       pages.appendChild(pageEl);
     }
+    // Rebuild the tool group now that we know whether ANY page has selectable
+    // text — Highlight is disabled for text-free (e.g. scanned) documents.
+    this.refreshToolGroup();
+    this.setTool(this.tool);
+  }
+
+  private get anyPageHasText(): boolean {
+    return this.pageHasText.some(Boolean);
+  }
+
+  // --- tools --------------------------------------------------------------
+
+  private buildToolGroup(): HTMLElement {
+    const group = this.el('div', 'fa-tools');
+    group.setAttribute('role', 'toolbar');
+    group.setAttribute('aria-label', 'Annotation tools');
+    this.toolButtons.clear();
+    for (const meta of TOOLS) {
+      const btn = this.button(meta.label, 'fa-tool');
+      btn.dataset['tool'] = meta.tool;
+      btn.title = `${meta.label} (${meta.shortcut.toUpperCase()}) — ${meta.hint}`;
+      btn.setAttribute('aria-pressed', 'false');
+      btn.addEventListener('click', () => this.setTool(meta.tool));
+      this.toolButtons.set(meta.tool, btn);
+      group.appendChild(btn);
+    }
+    return group;
+  }
+
+  /** Reflect text-layer availability onto the tool buttons (disable Highlight). */
+  private refreshToolGroup(): void {
+    const hasText = this.anyPageHasText;
+    for (const meta of TOOLS) {
+      const btn = this.toolButtons.get(meta.tool);
+      if (!btn) continue;
+      const available = isToolAvailable(meta.tool, hasText);
+      btn.disabled = !available;
+      btn.title = available
+        ? `${meta.label} (${meta.shortcut.toUpperCase()}) — ${meta.hint}`
+        : `${meta.label} unavailable — this PDF has no selectable text. Use Box or Pin.`;
+    }
+  }
+
+  /** Activate a tool: update button state, page cursor, text-layer gating, hint. */
+  private setTool(tool: AuthorTool): void {
+    // Never activate a tool that isn't available on this document.
+    if (!isToolAvailable(tool, this.anyPageHasText)) return;
+    this.tool = tool;
+    for (const [t, btn] of this.toolButtons) {
+      const active = t === tool;
+      btn.classList.toggle('fa-tool-active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    }
+    // A single class on the main pane drives cursor + text-layer interactivity
+    // (see styles): only the Highlight tool lets the text layer take the pointer.
+    for (const t of TOOLS) this.main.classList.remove(`fa-tool-${t.tool}`);
+    this.main.classList.add(`fa-tool-${tool}`);
+    this.main.style.setProperty('--fa-page-cursor', toolMeta(tool).cursor);
+    if (this.hintBar) this.hintBar.textContent = toolMeta(tool).hint;
+  }
+
+  /** Global keyboard shortcuts for tool switching and undo (ignored in fields). */
+  private installKeyboard(): void {
+    if (this.keyHandler) return;
+    this.keyHandler = (ev: KeyboardEvent): void => {
+      if (!this.activeDoc) return;
+      const target = ev.target as HTMLElement | null;
+      const inField =
+        !!target &&
+        (target.tagName === 'TEXTAREA' ||
+          target.tagName === 'INPUT' ||
+          target.isContentEditable);
+      if (inField) return;
+      if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase() === 'z') {
+        ev.preventDefault();
+        void this.undoLastNote();
+        return;
+      }
+      if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+      const tool = toolForShortcut(ev.key);
+      if (tool) {
+        ev.preventDefault();
+        this.setTool(tool);
+      }
+    };
+    this.win.addEventListener?.('keydown', this.keyHandler);
   }
 
   private async renderPage(pageIndex: number, viewport: Viewport): Promise<HTMLElement> {
@@ -251,16 +374,18 @@ export class AuthorApp {
     mainCol.appendChild(textLayer);
     try {
       await pdf.renderTextLayer(pageIndex, textLayer, CSS_ZOOM);
+      this.pageHasText[pageIndex] = textLayer.childNodes.length > 0;
       this.wireTextSelection(mainCol, textLayer, pageIndex, viewport);
     } catch {
       // A page with no extractable text (e.g. scanned) simply has no text layer;
-      // region/point notes still work.
+      // region/point notes still work. `pageHasText[pageIndex]` stays false.
     }
 
     const overlay = this.el('div', 'fa-overlay');
     mainCol.appendChild(overlay);
 
-    // Region/point creation via drag/click on the overlay area.
+    // Region (Box) / point (Pin) creation on the page surface. The handlers are
+    // gated on the active tool, so nothing fires unless Box/Pin is selected.
     this.wirePageInput(mainCol, pageIndex, viewport);
 
     const margin = this.el('div', 'fa-margin');
@@ -292,13 +417,16 @@ export class AuthorApp {
 
     for (const ann of anns) {
       // Highlights
+      const isPoint = ann.anchor.kind === 'point';
       for (const r of anchorHighlightRects(viewport, ann.anchor)) {
-        const hl = this.el('div', `fa-hl fa-${ann.publication}`);
+        const hl = this.el('div', `fa-hl fa-${ann.publication}${isPoint ? ' fa-hl-point' : ''}`);
+        hl.dataset['noteId'] = ann.id;
         hl.style.left = `${r.left}px`;
         hl.style.top = `${r.top}px`;
         hl.style.width = `${r.width}px`;
         hl.style.height = `${r.height}px`;
-        hl.style.background = ann.color;
+        if (!isPoint) hl.style.background = ann.color;
+        hl.addEventListener('click', () => this.focusNoteCard(ann.id));
         overlay.appendChild(hl);
       }
       // Editor card
@@ -378,10 +506,62 @@ export class AuthorApp {
 
     row.append(tags, pub, del);
 
+    const colors = this.buildColorRow(ann, controller, card, onChange);
+
     const head = this.el('div', 'fa-card-row');
     head.append(state);
-    card.append(head, textarea, preview, row);
+    card.append(head, textarea, preview, colors, row);
     return card;
+  }
+
+  /** A swatch row + custom picker that sets a note's color live. */
+  private buildColorRow(
+    ann: Annotation,
+    controller: NoteSaveController,
+    card: HTMLElement,
+    onChange: () => void,
+  ): HTMLElement {
+    const wrap = this.el('div', 'fa-colors');
+    const apply = (color: string): void => {
+      this.lastColor = color;
+      controller.edit({ color });
+      card.style.borderLeftColor = color;
+      // Recolor this note's highlights immediately.
+      const sel = `.fa-hl[data-note-id="${cssEscape(ann.id)}"]`;
+      for (const hl of Array.from(this.main.querySelectorAll<HTMLElement>(sel))) {
+        if (ann.anchor.kind !== 'point') hl.style.background = color;
+      }
+      void this.commit(controller).then(onChange);
+    };
+    for (const color of NOTE_COLORS) {
+      const sw = this.el('button', 'fa-swatch') as HTMLButtonElement;
+      sw.type = 'button';
+      sw.style.background = color;
+      sw.title = color;
+      sw.setAttribute('aria-label', `Set color ${color}`);
+      if (color.toLowerCase() === ann.color.toLowerCase()) sw.classList.add('fa-swatch-active');
+      sw.addEventListener('click', () => {
+        for (const s of Array.from(wrap.querySelectorAll('.fa-swatch'))) {
+          s.classList.remove('fa-swatch-active');
+        }
+        sw.classList.add('fa-swatch-active');
+        apply(color);
+      });
+      wrap.appendChild(sw);
+    }
+    const custom = this.doc.createElement('input') as HTMLInputElement;
+    custom.type = 'color';
+    custom.className = 'fa-color-input';
+    custom.value = ann.color;
+    custom.title = 'Custom color';
+    custom.addEventListener('input', () => {
+      for (const s of Array.from(wrap.querySelectorAll('.fa-swatch'))) {
+        s.classList.remove('fa-swatch-active');
+      }
+      apply(custom.value);
+    });
+    wrap.appendChild(custom);
+    return wrap;
   }
 
   private async commit(controller: NoteSaveController): Promise<void> {
@@ -413,10 +593,7 @@ export class AuthorApp {
   }
 
   private async onDeleteNote(id: string, onChange: () => void): Promise<void> {
-    this.controllers.get(id)?.dispose();
-    this.controllers.delete(id);
-    await deleteAnnotation(id);
-    this.annotations.delete(id);
+    await this.removeNote(id);
     onChange();
   }
 
@@ -427,49 +604,69 @@ export class AuthorApp {
     let startY = 0;
     let dragging = false;
     let band: HTMLElement | null = null;
+    // Track the pointer globally during a drag so a rectangle finished off the
+    // page still resolves (R2 in the plan), and remove the listeners after.
+    let onMove: ((ev: PointerEvent) => void) | null = null;
+    let onUp: ((ev: PointerEvent) => void) | null = null;
 
-    const localPoint = (ev: MouseEvent): [number, number] => {
+    const localPoint = (ev: PointerEvent): [number, number] => {
       const rect = mainCol.getBoundingClientRect();
       return [ev.clientX - rect.left, ev.clientY - rect.top];
     };
+    const clampToPage = (v: number, max: number): number => Math.max(0, Math.min(v, max));
 
-    mainCol.addEventListener('mousedown', (ev) => {
-      // Left button on empty page area starts a region drag; text selection is
-      // handled separately via the text layer + selection toolbar.
-      if (ev.button !== 0 || (ev.target as HTMLElement).closest('.fa-hl')) return;
-      [startX, startY] = localPoint(ev);
-      dragging = true;
-      band = this.el('div', 'fa-hl fa-private');
-      band.style.left = `${startX}px`;
-      band.style.top = `${startY}px`;
-      band.style.background = 'rgba(43,108,176,0.15)';
-      mainCol.querySelector('.fa-overlay')?.appendChild(band);
-    });
-
-    mainCol.addEventListener('mousemove', (ev) => {
-      if (!dragging || !band) return;
-      const [x, y] = localPoint(ev);
-      band.style.left = `${Math.min(startX, x)}px`;
-      band.style.top = `${Math.min(startY, y)}px`;
-      band.style.width = `${Math.abs(x - startX)}px`;
-      band.style.height = `${Math.abs(y - startY)}px`;
-    });
-
-    mainCol.addEventListener('mouseup', (ev) => {
-      if (!dragging) return;
+    const endDrag = (): void => {
       dragging = false;
-      const [x, y] = localPoint(ev);
       band?.remove();
       band = null;
-      const w = Math.abs(x - startX);
-      const h = Math.abs(y - startY);
-      if (w < 6 && h < 6) {
-        // Treat as a point note.
+      if (onMove) this.doc.removeEventListener('pointermove', onMove);
+      if (onUp) this.doc.removeEventListener('pointerup', onUp);
+      onMove = null;
+      onUp = null;
+    };
+
+    mainCol.addEventListener('pointerdown', (ev) => {
+      const gesture = armedGesture(this.tool, this.pageHasText[pageIndex] ?? false);
+      // Only the primary button, and never when starting on an existing
+      // highlight (that is a Select-mode focus click, handled elsewhere).
+      if (ev.button !== 0 || (ev.target as HTMLElement).closest('.fa-hl')) return;
+
+      if (gesture === 'click-point') {
+        const [px, py] = localPoint(ev);
         void this.createNote(
-          buildPointAnchor({ info: this.infoFor(pageIndex), viewport, x, y }),
+          buildPointAnchor({ info: this.infoFor(pageIndex), viewport, x: px, y: py }),
           pageIndex,
         );
-      } else {
+        return;
+      }
+      if (gesture !== 'drag-region') return;
+
+      // Box tool: rubber-band a rectangle.
+      [startX, startY] = localPoint(ev);
+      dragging = true;
+      band = this.el('div', 'fa-hl fa-private fa-band');
+      band.style.left = `${startX}px`;
+      band.style.top = `${startY}px`;
+      mainCol.querySelector('.fa-overlay')?.appendChild(band);
+
+      onMove = (mv: PointerEvent): void => {
+        if (!dragging || !band) return;
+        const [x, y] = localPoint(mv);
+        band.style.left = `${Math.min(startX, x)}px`;
+        band.style.top = `${Math.min(startY, y)}px`;
+        band.style.width = `${Math.abs(x - startX)}px`;
+        band.style.height = `${Math.abs(y - startY)}px`;
+      };
+      onUp = (up: PointerEvent): void => {
+        if (!dragging) return;
+        const [rawX, rawY] = localPoint(up);
+        const x = clampToPage(rawX, viewport.width);
+        const y = clampToPage(rawY, viewport.height);
+        endDrag();
+        const w = Math.abs(x - startX);
+        const h = Math.abs(y - startY);
+        // A too-small box is a slip, not a note — ignore it (no accidental notes).
+        if (w < 6 || h < 6) return;
         const rect: LineRect = {
           left: Math.min(startX, x),
           top: Math.min(startY, y),
@@ -480,7 +677,9 @@ export class AuthorApp {
           buildRegionAnchor({ info: this.infoFor(pageIndex), viewport, rect }),
           pageIndex,
         );
-      }
+      };
+      this.doc.addEventListener('pointermove', onMove);
+      this.doc.addEventListener('pointerup', onUp);
     });
   }
 
@@ -491,8 +690,12 @@ export class AuthorApp {
     viewport: Viewport,
   ): void {
     // On mouseup inside the text layer, if there is a non-empty selection within
-    // this page, offer a "Highlight + note" action.
+    // this page, offer a "Highlight + note" action — but ONLY when the Highlight
+    // tool is active, so text selection never fires alongside Box/Pin/Select.
     textLayer.addEventListener('mouseup', () => {
+      if (armedGesture(this.tool, this.pageHasText[pageIndex] ?? false) !== 'text-selection') {
+        return;
+      }
       const sel = this.win.getSelection?.();
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
         this.hideSelToolbar();
@@ -559,25 +762,82 @@ export class AuthorApp {
     return this.pageInfos[pageIndex]!;
   }
 
-  private async createNote(anchor: ReturnType<typeof buildPointAnchor>, pageIndex: number): Promise<void> {
+  private async createNote(anchor: Anchor, pageIndex: number): Promise<void> {
     if (!this.activeDoc) return;
     const ann = buildAnnotation({
       id: newUuid(),
       documentSha256: this.activeDoc.sha256,
       anchor,
+      color: this.lastColor,
       now: nowIso(),
     });
     try {
       await createAnnotation(ann);
       this.annotations.set(ann.id, ann);
+      this.lastCreatedId = ann.id;
       // Re-render just this page.
       const viewport = this.pageViewports[pageIndex]!;
       const pageEl = this.main.querySelectorAll('.fa-page')[pageIndex] as HTMLElement | undefined;
       const overlay = pageEl?.querySelector<HTMLElement>('.fa-overlay');
       const margin = pageEl?.querySelector<HTMLElement>('.fa-margin');
       if (overlay && margin) this.renderPageAnnotations(pageIndex, viewport, overlay, margin);
+      this.flashNote(ann.id);
     } catch (err) {
       this.showError(`Could not create note: ${message(err)}`);
+    }
+  }
+
+  /** Scroll a note's card into view and mark it active (Select-mode click). */
+  private focusNoteCard(id: string): void {
+    const safe = cssEscape(id);
+    const card = this.main.querySelector<HTMLElement>(`.fa-card[data-note-id="${safe}"]`);
+    if (!card) return;
+    for (const c of Array.from(this.main.querySelectorAll('.fa-card.fa-active'))) {
+      c.classList.remove('fa-active');
+    }
+    card.classList.add('fa-active');
+    card.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  /** Briefly flash a note's highlight + card so the author sees what appeared. */
+  private flashNote(id: string): void {
+    const sel = `[data-note-id="${cssEscape(id)}"]`;
+    for (const el of Array.from(this.main.querySelectorAll<HTMLElement>(sel))) {
+      el.classList.remove('fa-flash');
+      // Force reflow so re-adding the class restarts the animation.
+      void el.offsetWidth;
+      el.classList.add('fa-flash');
+      this.win.setTimeout?.(() => el.classList.remove('fa-flash'), 700);
+    }
+  }
+
+  /** Delete the most recently created note (single-level undo). */
+  private async undoLastNote(): Promise<void> {
+    const id = this.lastCreatedId;
+    if (!id || !this.annotations.has(id)) return;
+    const pageIndex = this.annotations.get(id)!.anchor.pageIndex;
+    this.lastCreatedId = null;
+    await this.removeNote(id);
+    this.rerenderPage(pageIndex);
+  }
+
+  /** Tear down a note's controller + storage + in-memory entry. */
+  private async removeNote(id: string): Promise<void> {
+    this.controllers.get(id)?.dispose();
+    this.controllers.delete(id);
+    await deleteAnnotation(id);
+    this.annotations.delete(id);
+    if (this.lastCreatedId === id) this.lastCreatedId = null;
+  }
+
+  /** Re-render the annotations of a single page from current state. */
+  private rerenderPage(pageIndex: number): void {
+    const viewport = this.pageViewports[pageIndex];
+    const pageEl = this.main.querySelectorAll('.fa-page')[pageIndex] as HTMLElement | undefined;
+    const overlay = pageEl?.querySelector<HTMLElement>('.fa-overlay');
+    const margin = pageEl?.querySelector<HTMLElement>('.fa-margin');
+    if (viewport && overlay && margin) {
+      this.renderPageAnnotations(pageIndex, viewport, overlay, margin);
     }
   }
 
@@ -633,6 +893,12 @@ export class AuthorApp {
     b.type = 'button';
     return b;
   }
+}
+
+/** CSS.escape when available, else identity (UUIDs need no escaping anyway). */
+function cssEscape(id: string): string {
+  const c = (globalThis as { CSS?: { escape?: (s: string) => string } }).CSS;
+  return c?.escape ? c.escape(id) : id;
 }
 
 function splitTags(value: string): string[] {

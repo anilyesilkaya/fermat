@@ -26,7 +26,7 @@ The authoring app is distributed from **fermat.yesilkaya.dev**. That address hos
 ### In the MVP
 
 - **PDF import** with title, tags, reading status, and resume position.
-- **Annotations:** text highlights, rectangular region notes, and point notes. Region and point notes work on scanned pages without selectable text (where text selection is unavailable, Fermat says so rather than requiring OCR).
+- **Annotations:** chosen with an explicit tool — **Select** (`V`), **Highlight** (`H`), **Box** (`B`), **Pin** (`P`) — so a gesture always produces the note kind you intend. Highlight draws a text highlight from a selection; Box drags a rectangle over a figure or region; Pin drops a point. Box and Pin work on scanned pages without selectable text, where Highlight is disabled with an explanation rather than requiring OCR. Each note carries a color, and the last note created can be undone with `Ctrl`/`Cmd`+`Z`.
 - **Notes:** Markdown with safe math display and ordinary links.
 - **Stable source anchors** and note deep links.
 - **Exports:** editable project ZIP, Markdown export, and selective static-reader ZIP.

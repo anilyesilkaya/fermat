@@ -1,6 +1,5 @@
 import type { PdfDocument } from '../pdf/document';
 import type { Viewport } from '../pdf/transforms';
-import { canvasBackingSize } from '../pdf/transforms';
 import {
   anchorHighlightRects,
   anchorTopViewportY,
@@ -137,13 +136,13 @@ export class Reader {
 
     const main = doc.createElement('div');
     main.className = 'fx-page-main';
+    // Natural size is the page's CSS-pixel width; aspect-ratio holds its shape so
+    // it scales down (never up) to fit narrow screens without horizontal scroll.
     main.style.width = `${viewport.width}px`;
-    main.style.height = `${viewport.height}px`;
+    main.style.aspectRatio = `${viewport.width} / ${viewport.height}`;
 
     const placeholder = doc.createElement('div');
     placeholder.className = 'fx-page-placeholder';
-    placeholder.style.width = `${viewport.width}px`;
-    placeholder.style.height = `${viewport.height}px`;
     placeholder.textContent = `Page ${pageLabel(pageIndex)}`;
     main.appendChild(placeholder);
 
@@ -219,9 +218,6 @@ export class Reader {
     const doc = this.container.ownerDocument;
     const canvas = doc.createElement('canvas');
     canvas.className = 'fx-page-canvas';
-    const { cssWidth, cssHeight } = canvasBackingSize(frame.viewport, this.dpr);
-    canvas.style.width = `${cssWidth}px`;
-    canvas.style.height = `${cssHeight}px`;
     // Insert canvas beneath the overlay.
     frame.main.insertBefore(canvas, frame.overlay);
     frame.canvas = canvas;
@@ -234,6 +230,13 @@ export class Reader {
     }
     // A concurrent unmount may have fired while we awaited the render.
     if (!this.live.has(pageIndex)) return;
+
+    // render() sets a FIXED-pixel CSS size on the canvas; override it so the
+    // bitmap fills its (fluid, max-width-constrained) page box instead — this is
+    // what lets a page shrink to fit a phone. The DPR-scaled backing store is
+    // unchanged, so the downscaled render stays crisp.
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
 
     const placeholder = frame.main.querySelector('.fx-page-placeholder');
     placeholder?.remove();
@@ -262,17 +265,29 @@ export class Reader {
 
   private renderHighlights(frame: PageFrame): void {
     const doc = this.container.ownerDocument;
+    const { width: vw, height: vh } = frame.viewport;
     for (const ann of frame.annotations) {
+      const isPoint = ann.anchor.kind === 'point';
       const rects = anchorHighlightRects(frame.viewport, ann.anchor);
       const els: HTMLElement[] = [];
       for (const r of rects) {
         const el = doc.createElement('div');
-        el.className = ann.anchor.kind === 'point' ? 'fx-hl fx-hl-point' : 'fx-hl';
-        el.style.left = `${r.left}px`;
-        el.style.top = `${r.top}px`;
-        el.style.width = `${r.width}px`;
-        el.style.height = `${r.height}px`;
-        if (ann.anchor.kind !== 'point') el.style.background = ann.color;
+        el.className = isPoint ? 'fx-hl fx-hl-point' : 'fx-hl';
+        // Position highlights as PERCENTAGES of the page box, not fixed pixels,
+        // so they stay pinned to their anchor when the page scales down to fit a
+        // narrow screen (the box's pixel width is no longer viewport.width).
+        if (isPoint) {
+          // Anchor the marker by its CENTER and keep a fixed, tappable size (see
+          // .fx-hl-point) via a translate — so it never shrinks away on a phone.
+          el.style.left = `${((r.left + r.width / 2) / vw) * 100}%`;
+          el.style.top = `${((r.top + r.height / 2) / vh) * 100}%`;
+        } else {
+          el.style.left = `${(r.left / vw) * 100}%`;
+          el.style.top = `${(r.top / vh) * 100}%`;
+          el.style.width = `${(r.width / vw) * 100}%`;
+          el.style.height = `${(r.height / vh) * 100}%`;
+          el.style.background = ann.color;
+        }
         el.dataset['noteId'] = ann.id;
         el.addEventListener('click', () => this.focusNote(ann.id));
         frame.overlay.appendChild(el);
