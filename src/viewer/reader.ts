@@ -11,8 +11,13 @@ import {
   type CardInput,
 } from '../notes';
 import type { LoadedReading, LoadedAnnotation } from './load';
+import { isSafeHomeUrl } from './load';
 import { desiredLivePages, diffLivePages, type VisibleRange } from './virtualize';
 import { ensureReaderStyles } from './styles';
+
+/** Light/dark chrome theme. The PDF page itself always stays white paper. */
+type Theme = 'light' | 'dark';
+const THEME_STORAGE_KEY = 'fermat-reader-theme';
 
 /**
  * The reader runtime: renders the published PDF with its notes in an adjacent
@@ -57,6 +62,8 @@ export class Reader {
   private readonly dpr: number;
   private observer: IntersectionObserver | null = null;
   private activeNoteId: string | null = null;
+  private theme: Theme = 'light';
+  private themeButton: HTMLButtonElement | null = null;
 
   constructor(
     private readonly container: HTMLElement,
@@ -85,13 +92,82 @@ export class Reader {
     title.textContent = this.reading.manifest.title;
     this.pageInfo = doc.createElement('span');
     this.pageInfo.className = 'fx-pageinfo';
-    header.append(title, this.pageInfo);
+
+    const actions = doc.createElement('div');
+    actions.className = 'fx-actions';
+
+    // Home: only when this reader was built into a library and the target is a
+    // safe relative URL — a standalone reading has nowhere to go, so no button.
+    const home = this.reading.manifest.home;
+    if (isSafeHomeUrl(home)) {
+      const homeBtn = doc.createElement('a') as HTMLAnchorElement;
+      homeBtn.className = 'fx-btn';
+      homeBtn.href = home;
+      homeBtn.textContent = '← Library';
+      homeBtn.title = 'Back to the library';
+      actions.appendChild(homeBtn);
+    }
+
+    // Theme toggle (light/dark chrome).
+    const themeBtn = doc.createElement('button');
+    themeBtn.type = 'button';
+    themeBtn.className = 'fx-btn';
+    themeBtn.addEventListener('click', () => this.toggleTheme());
+    this.themeButton = themeBtn;
+    actions.appendChild(themeBtn);
+
+    header.append(title, this.pageInfo, actions);
 
     this.scroll = doc.createElement('div');
     this.scroll.className = 'fx-scroll';
 
     this.root.append(header, this.scroll);
     container.appendChild(this.root);
+
+    // Apply the persisted / preferred theme now that the toggle exists.
+    this.applyTheme(this.initialTheme(), { persist: false });
+  }
+
+  // --- theme --------------------------------------------------------------
+
+  /** Persisted choice, else the OS preference, else light. */
+  private initialTheme(): Theme {
+    const stored = this.readStoredTheme();
+    if (stored) return stored;
+    const mql = this.window.matchMedia?.('(prefers-color-scheme: dark)');
+    return mql?.matches ? 'dark' : 'light';
+  }
+
+  private readStoredTheme(): Theme | null {
+    try {
+      const v = this.window.localStorage?.getItem(THEME_STORAGE_KEY);
+      return v === 'dark' || v === 'light' ? v : null;
+    } catch {
+      return null; // storage may be unavailable (private mode / file://).
+    }
+  }
+
+  private toggleTheme(): void {
+    this.applyTheme(this.theme === 'dark' ? 'light' : 'dark', { persist: true });
+  }
+
+  private applyTheme(theme: Theme, opts: { persist: boolean }): void {
+    this.theme = theme;
+    this.root.dataset['theme'] = theme;
+    if (this.themeButton) {
+      // Label offers the OTHER theme (the action), with an icon for glanceability.
+      const toDark = theme === 'light';
+      this.themeButton.textContent = toDark ? '🌙 Dark' : '☀ Light';
+      this.themeButton.title = toDark ? 'Switch to dark theme' : 'Switch to light theme';
+      this.themeButton.setAttribute('aria-pressed', theme === 'dark' ? 'true' : 'false');
+    }
+    if (opts.persist) {
+      try {
+        this.window.localStorage?.setItem(THEME_STORAGE_KEY, theme);
+      } catch {
+        // Ignore storage failures — the theme still applies for this session.
+      }
+    }
   }
 
   /** Build page frames, wire virtualization, and honor the initial deep link. */

@@ -20,6 +20,14 @@ const PublicManifestSchema = z.object({
     pageCount: z.number().int().positive(),
     sourceRevision: z.number().int().positive(),
   }),
+  /**
+   * Optional relative URL of a parent library/shelf index. Present only when the
+   * reader was built into a collection (e.g. the demo bookshelf); a standalone
+   * published reading omits it, so the reader shows no "Home" link with nowhere
+   * to go. Only relative URLs are honored (see isSafeHomeUrl) — the reader must
+   * never navigate to an external origin from published data.
+   */
+  home: z.string().optional(),
 });
 
 const PublicAnnotationSchema = z.object({
@@ -45,6 +53,23 @@ export interface LoadedReading {
 /** Resolve a bundle-relative path against the reader's own location. */
 function resolveBundleUrl(path: string, base: string): string {
   return new URL(path, base).href;
+}
+
+/**
+ * Whether a manifest `home` value is safe to use as a navigation target.
+ *
+ * The reader is self-contained and must never be steered to a remote origin by
+ * its (untrusted-by-contract) published data. We accept ONLY relative URLs: no
+ * scheme (`https:`, `javascript:`, …) and no protocol-relative (`//host`) or
+ * root-absolute (`/path`) forms — a shelf is always reached by going *up* from a
+ * nested reader (e.g. `../../index.html`).
+ */
+export function isSafeHomeUrl(home: string | undefined): home is string {
+  if (!home) return false;
+  if (home.startsWith('/')) return false; // absolute path or protocol-relative
+  // Reject anything with an explicit scheme (e.g. https:, javascript:, data:).
+  if (/^[a-z][a-z0-9+.-]*:/i.test(home)) return false;
+  return true;
 }
 
 /**

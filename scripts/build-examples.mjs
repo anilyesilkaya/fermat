@@ -202,6 +202,10 @@ function main() {
       viewerSchemaVersion: SCHEMA_VERSION,
       title,
       source: { sha256, pageCount: geom.pageCount, sourceRevision: 1 },
+      // Reader lives at readers/<slug>/; the shelf index is two levels up. A
+      // relative link keeps the whole tree deployable at any base path (the
+      // reader validates this is relative before using it — see load.ts).
+      home: '../../index.html',
     };
     const annotations = reading.notes.map((n) =>
       buildAnnotation(n, sha256, pageSize, geom.lines),
