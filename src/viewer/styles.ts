@@ -58,11 +58,26 @@ export const READER_CSS = `
 .fx-page-main {
   position: relative;
   flex: 0 0 auto;
+  /* Natural size is the page's CSS-pixel size (set inline), but never wider than
+     the available column: on a phone the page scales down to fit instead of
+     forcing horizontal scroll. aspect-ratio (set inline) holds the box height
+     whether or not the canvas is currently mounted (pages are virtualized). */
+  max-width: 100%;
   background: #fff;
   box-shadow: 0 1px 4px rgba(0,0,0,0.15);
 }
-.fx-page-canvas { display: block; }
+/* Canvas and placeholder fill the page box; the box's size comes from
+   width + aspect-ratio, so mounting/unmounting the canvas never reflows. */
+.fx-page-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
 .fx-page-placeholder {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -87,9 +102,15 @@ export const READER_CSS = `
 }
 .fx-hl:hover, .fx-hl.fx-active { outline-color: var(--fx-focus); }
 .fx-hl-point {
+  /* Positioned by its center (left/top are the anchor point); a fixed, tappable
+     size that does NOT scale with the page, so it stays visible on a phone. */
+  width: 16px;
+  height: 16px;
+  transform: translate(-50%, -50%);
   border-radius: 50%;
   border: 2px solid var(--fx-focus);
   background: rgba(43,108,176,0.25);
+  mix-blend-mode: normal;
 }
 
 .fx-margin {
@@ -118,10 +139,15 @@ export const READER_CSS = `
 .fx-card-tags { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
 .fx-tag { font-size: 0.72rem; color: #4a5568; background: #edf2f7; border-radius: 10px; padding: 1px 8px; }
 
-/* Narrow screens: stack notes under the page, in reading order. */
+/* Narrow screens: stack notes under the page, in reading order, and let the
+   page fill the width (it scales down via max-width + aspect-ratio). */
 @media (max-width: 900px) {
   .fx-page { flex-direction: column; }
+  .fx-page-main { width: 100%; }
   .fx-margin { flex-basis: auto; width: 100%; }
+  /* Cards now flow in normal order; drop the absolute-layout min-height so there
+     is no large empty gap under the last note (min-height is set inline in JS). */
+  .fx-margin { min-height: 0 !important; }
   .fx-card { position: static; width: auto; margin-bottom: var(--fx-gap); }
 }
 

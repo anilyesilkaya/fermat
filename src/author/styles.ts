@@ -70,6 +70,24 @@ body { margin: 0; }
 }
 .fa-doc-name { font-weight: 600; }
 .fa-spacer { flex: 1 1 auto; }
+
+/* Tool group (segmented control). */
+.fa-tools { display: inline-flex; border: 1px solid var(--fa-border); border-radius: 8px; overflow: hidden; margin-left: 6px; }
+.fa-tool {
+  appearance: none; border: 0; border-left: 1px solid var(--fa-border);
+  background: #fff; font: inherit; padding: 6px 12px; cursor: pointer; color: #2d3748;
+}
+.fa-tool:first-child { border-left: 0; }
+.fa-tool:hover:not(:disabled) { background: #edf2f7; }
+.fa-tool-active { background: var(--fa-accent); color: #fff; }
+.fa-tool-active:hover:not(:disabled) { background: var(--fa-accent); }
+.fa-tool:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Active-tool hint bar. */
+.fa-hint {
+  flex: 0 0 auto; padding: 5px 14px; font-size: 0.8rem; color: var(--fa-muted);
+  background: #fbfcfe; border-bottom: 1px solid var(--fa-border);
+}
 .fa-chip { font-size: 0.76rem; padding: 2px 9px; border-radius: 10px; background: #edf2f7; color: #4a5568; }
 .fa-chip-saved { background: #e6ffed; color: #22543d; }
 .fa-chip-saving { background: #fffbe6; color: #744210; }
@@ -78,15 +96,33 @@ body { margin: 0; }
 
 .fa-pages { flex: 1 1 auto; overflow: auto; padding: 20px; background: #f5f6f8; }
 .fa-page { display: flex; gap: 20px; align-items: flex-start; margin: 0 auto 20px; width: max-content; }
-.fa-page-main { position: relative; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.15); }
+.fa-page-main { position: relative; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.15); cursor: var(--fa-page-cursor, default); }
 .fa-textlayer {
   position: absolute; inset: 0; overflow: hidden; opacity: 0.2; line-height: 1;
+  /* Only the Highlight tool routes the pointer to the text layer for selection;
+     otherwise the layer is transparent to pointer events so Box/Pin/Select act
+     on the page surface directly (this is what keeps gestures unambiguous). */
+  pointer-events: none;
 }
+.fa-tool-highlight .fa-textlayer { pointer-events: auto; }
 .fa-textlayer span { position: absolute; white-space: pre; color: transparent; cursor: text; transform-origin: 0 0; }
 .fa-overlay { position: absolute; inset: 0; pointer-events: none; }
 .fa-hl { position: absolute; pointer-events: auto; cursor: pointer; border-radius: 2px; mix-blend-mode: multiply; }
 .fa-hl.fa-private { outline: 1px dashed rgba(0,0,0,0.4); }
 .fa-hl.fa-public { outline: 2px solid var(--fa-accent); }
+/* Point marker: a small pin dot rather than a filled box. */
+.fa-hl.fa-hl-point {
+  mix-blend-mode: normal; border-radius: 50%;
+  background: var(--fa-accent); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--fa-accent);
+}
+/* Rubber-band while dragging a Box. */
+.fa-hl.fa-band { mix-blend-mode: normal; background: rgba(43,108,176,0.15); pointer-events: none; }
+/* Creation flash for a freshly added note (highlight or card). */
+.fa-flash { animation: fa-flash 0.7s ease-out; }
+@keyframes fa-flash {
+  0% { box-shadow: 0 0 0 3px var(--fa-accent); }
+  100% { box-shadow: 0 0 0 0 rgba(43,108,176,0); }
+}
 
 .fa-margin { flex: 0 0 320px; position: relative; }
 .fa-card { position: absolute; left: 0; width: 100%; background: #fff; border: 1px solid var(--fa-border); border-left: 4px solid #cbd5e0; border-radius: 6px; padding: 8px 10px; }
@@ -96,6 +132,18 @@ body { margin: 0; }
 .fa-card-row input[type=text] { flex: 1 1 auto; font: inherit; border: 1px solid var(--fa-border); border-radius: 4px; padding: 4px 6px; }
 .fa-toggle { font-size: 0.78rem; display: flex; align-items: center; gap: 4px; }
 .fa-preview { font-size: 0.9rem; border-top: 1px dashed var(--fa-border); margin-top: 6px; padding-top: 6px; }
+
+/* Per-note color: preset swatches + a custom picker. */
+.fa-colors { display: flex; gap: 5px; align-items: center; margin-top: 6px; }
+.fa-swatch {
+  width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.2);
+  padding: 0; cursor: pointer; appearance: none;
+}
+.fa-swatch-active { outline: 2px solid var(--fa-accent); outline-offset: 1px; }
+.fa-color-input {
+  width: 24px; height: 22px; padding: 0; border: 1px solid var(--fa-border);
+  border-radius: 4px; background: none; cursor: pointer; margin-left: 2px;
+}
 
 .fa-seltoolbar {
   position: fixed; z-index: 20; display: none; gap: 4px; padding: 4px;
@@ -107,6 +155,30 @@ body { margin: 0; }
 .fa-empty { margin: auto; color: var(--fa-muted); text-align: center; padding: 40px; }
 .fa-banner { padding: 8px 14px; background: #fffbe6; color: #744210; border-bottom: 1px solid #f6e05e; font-size: 0.85rem; }
 .fa-error-banner { padding: 8px 14px; background: #fff5f5; color: #822727; border-bottom: 1px solid #feb2b2; font-size: 0.85rem; }
+
+/* Narrow screens (phones/tablets): the two-pane grid can't fit, so stack the
+   collection sidebar above the document and let the toolbar wrap. The PDF page
+   itself keeps its natural pixel size — authoring gestures map 1:1 to page
+   pixels, so scaling it down would misplace Box/Pin notes — but the note rail
+   moves BELOW the page (cards in reading order) instead of into a fixed side
+   rail that would sit off-screen. The pages area scrolls if a page is wider
+   than the viewport. */
+@media (max-width: 720px) {
+  .fa-app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .fa-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--fa-border);
+    max-height: 42vh;
+  }
+  .fa-toolbar { flex-wrap: wrap; gap: 6px; }
+  .fa-tools { margin-left: 0; }
+  .fa-page { flex-direction: column; width: auto; }
+  .fa-margin { flex: 0 0 auto; width: 100%; max-width: 640px; min-height: 0 !important; }
+  .fa-card { position: static; width: 100%; margin-bottom: 12px; }
+}
 `;
 
 export function ensureAuthorStyles(doc: Document): void {
