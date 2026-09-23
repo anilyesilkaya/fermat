@@ -133,11 +133,19 @@ function bookshelfHtml(cards) {
     <title>Fermat — example readings</title>
     <meta name="description" content="A shelf of annotated PDF readings. Pick a title to open a self-contained interactive reader." />
     <style>
-      :root { color-scheme: light dark; --bg:#fafaf8; --fg:#1c1c1c; --muted:#6b6b6b; --card:#fff; --line:#e6e6e0; --accent:#3050c8; }
-      @media (prefers-color-scheme: dark) { :root { --bg:#16161a; --fg:#ececec; --muted:#9a9a9a; --card:#20212a; --line:#31323d; --accent:#8aa0ff; } }
+      /* Light is the default; the media query themes dark for no-JS visitors.
+         An explicit data-theme (set by the toggle) always wins over both. */
+      :root { color-scheme: light; --bg:#fafaf8; --fg:#1c1c1c; --muted:#6b6b6b; --card:#fff; --line:#e6e6e0; --accent:#3050c8; }
+      @media (prefers-color-scheme: dark) { :root { color-scheme: dark; --bg:#16161a; --fg:#ececec; --muted:#9a9a9a; --card:#20212a; --line:#31323d; --accent:#8aa0ff; } }
+      :root[data-theme="light"] { color-scheme: light; --bg:#fafaf8; --fg:#1c1c1c; --muted:#6b6b6b; --card:#fff; --line:#e6e6e0; --accent:#3050c8; }
+      :root[data-theme="dark"] { color-scheme: dark; --bg:#16161a; --fg:#ececec; --muted:#9a9a9a; --card:#20212a; --line:#31323d; --accent:#8aa0ff; }
       * { box-sizing: border-box; }
       body { margin:0; font:16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background:var(--bg); color:var(--fg); }
       header { max-width:960px; margin:0 auto; padding:56px 24px 24px; }
+      .topbar { display:flex; justify-content:flex-end; margin:0 0 12px; }
+      .theme-btn { appearance:none; border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:6px; padding:6px 12px; font:inherit; font-size:14px; line-height:1; cursor:pointer; }
+      .theme-btn:hover { border-color:var(--accent); }
+      .theme-btn:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
       h1 { margin:0 0 8px; font-size:30px; letter-spacing:-0.01em; }
       header p { margin:0; color:var(--muted); max-width:60ch; }
       main { max-width:960px; margin:0 auto; padding:8px 24px 64px; }
@@ -157,6 +165,9 @@ function bookshelfHtml(cards) {
   </head>
   <body>
     <header>
+      <div class="topbar">
+        <button type="button" id="theme-btn" class="theme-btn" aria-pressed="false"></button>
+      </div>
       <h1>Example readings</h1>
       <p>Each reading below is a self-contained, interactive reader: its own PDF, its published margin notes, and the viewer runtime — all local files. Pick a title to open one.</p>
     </header>
@@ -168,6 +179,41 @@ ${items}
     <footer>
       Every reader here loads only relative, local assets — no network, no app-domain dependency — so this whole folder deploys to any static host (including GitHub Pages) at any nested path.
     </footer>
+    <script>
+      // Light/dark toggle mirroring the reader/author chrome: persisted choice
+      // wins, else the OS preference, else light. Self-contained — no network.
+      (function () {
+        var KEY = 'fermat-examples-theme';
+        var root = document.documentElement;
+        var btn = document.getElementById('theme-btn');
+        function stored() {
+          try { var v = localStorage.getItem(KEY); return v === 'dark' || v === 'light' ? v : null; }
+          catch (e) { return null; } // storage may be unavailable (private mode / file://).
+        }
+        function initial() {
+          var s = stored();
+          if (s) return s;
+          return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        function apply(theme, persist) {
+          root.dataset.theme = theme;
+          if (btn) {
+            // Label offers the OTHER theme (the action taken on click).
+            var toDark = theme === 'light';
+            btn.textContent = toDark ? '🌙 Dark' : '☀ Light';
+            btn.title = toDark ? 'Switch to dark theme' : 'Switch to light theme';
+            btn.setAttribute('aria-pressed', theme === 'dark' ? 'true' : 'false');
+          }
+          if (persist) {
+            try { localStorage.setItem(KEY, theme); } catch (e) { /* ignore — still applies this session. */ }
+          }
+        }
+        apply(initial(), false);
+        if (btn) btn.addEventListener('click', function () {
+          apply(root.dataset.theme === 'dark' ? 'light' : 'dark', true);
+        });
+      })();
+    </script>
   </body>
 </html>
 `;
