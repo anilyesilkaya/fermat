@@ -56,6 +56,10 @@ const CSS_ZOOM = 1.35;
 /** Preset note colors offered in the editor (first is the default). */
 const NOTE_COLORS = ['#ffe066', '#8ce99a', '#74c0fc', '#ffa8a8', '#e599f7'] as const;
 
+/** Light/dark chrome theme. The PDF page itself always stays white paper. */
+type Theme = 'light' | 'dark';
+const THEME_STORAGE_KEY = 'fermat-author-theme';
+
 export class AuthorApp {
   private readonly doc: Document;
   private readonly root: HTMLElement;
@@ -82,6 +86,8 @@ export class AuthorApp {
   private toolButtons = new Map<AuthorTool, HTMLButtonElement>();
   private hintBar: HTMLElement | null = null;
   private keyHandler: ((ev: KeyboardEvent) => void) | null = null;
+  private theme: Theme = 'light';
+  private themeButton: HTMLButtonElement | null = null;
 
   constructor(container: HTMLElement) {
     this.doc = container.ownerDocument;
@@ -101,8 +107,51 @@ export class AuthorApp {
   async init(): Promise<void> {
     await requestPersistentStorage();
     this.renderShell();
+    this.applyTheme(this.initialTheme(), { persist: false });
     this.installKeyboard();
     await this.refreshCollection();
+  }
+
+  // --- theme --------------------------------------------------------------
+
+  /** Persisted choice, else the OS preference, else light. */
+  private initialTheme(): Theme {
+    const stored = this.readStoredTheme();
+    if (stored) return stored;
+    const mql = this.win.matchMedia?.('(prefers-color-scheme: dark)');
+    return mql?.matches ? 'dark' : 'light';
+  }
+
+  private readStoredTheme(): Theme | null {
+    try {
+      const v = this.win.localStorage?.getItem(THEME_STORAGE_KEY);
+      return v === 'dark' || v === 'light' ? v : null;
+    } catch {
+      return null; // storage may be unavailable (private mode / file://).
+    }
+  }
+
+  private toggleTheme(): void {
+    this.applyTheme(this.theme === 'dark' ? 'light' : 'dark', { persist: true });
+  }
+
+  private applyTheme(theme: Theme, opts: { persist: boolean }): void {
+    this.theme = theme;
+    this.root.dataset['theme'] = theme;
+    if (this.themeButton) {
+      // Label offers the OTHER theme (the action taken on click).
+      const toDark = theme === 'light';
+      this.themeButton.textContent = toDark ? '🌙 Dark' : '☀ Light';
+      this.themeButton.title = toDark ? 'Switch to dark theme' : 'Switch to light theme';
+      this.themeButton.setAttribute('aria-pressed', theme === 'dark' ? 'true' : 'false');
+    }
+    if (opts.persist) {
+      try {
+        this.win.localStorage?.setItem(THEME_STORAGE_KEY, theme);
+      } catch {
+        // Ignore storage failures — the theme still applies for this session.
+      }
+    }
   }
 
   // --- shell --------------------------------------------------------------
@@ -111,11 +160,16 @@ export class AuthorApp {
     const sidebar = this.el('aside', 'fa-sidebar');
 
     const brand = this.el('div', 'fa-brand');
+    const brandText = this.el('div', 'fa-brand-text');
     const h1 = this.el('h1');
     h1.textContent = 'Fermat';
     const tag = this.el('p');
     tag.textContent = 'Margin notes for PDFs — local & free';
-    brand.append(h1, tag);
+    brandText.append(h1, tag);
+    const themeBtn = this.button('', 'fa-btn fa-theme-btn');
+    themeBtn.addEventListener('click', () => this.toggleTheme());
+    this.themeButton = themeBtn;
+    brand.append(brandText, themeBtn);
 
     const actions = this.el('div', 'fa-actions');
     const importBtn = this.button('Import PDF…', 'fa-btn fa-btn-primary');
@@ -225,6 +279,15 @@ export class AuthorApp {
     }
   }
 
+  /** Return to the collection: close the open document and show the shelf. */
+  private async goHome(): Promise<void> {
+    await this.closeActive();
+    this.activeDoc = null;
+    this.hintBar = null;
+    this.renderCollection();
+    this.renderEmptyMain();
+  }
+
   private async renderDocumentView(): Promise<void> {
     if (!this.activeDoc || !this.activePdf) return;
     const meta = this.activeDoc;
@@ -234,6 +297,9 @@ export class AuthorApp {
 
     // Toolbar
     const toolbar = this.el('div', 'fa-toolbar');
+    const homeBtn = this.button('← Home', 'fa-btn');
+    homeBtn.title = 'Back to the collection';
+    homeBtn.addEventListener('click', () => void this.goHome());
     const name = this.el('span', 'fa-doc-name');
     name.textContent = meta.title;
     const tools = this.buildToolGroup();
@@ -242,7 +308,7 @@ export class AuthorApp {
     publishBtn.addEventListener('click', () => void this.onPublish());
     const backupBtn = this.button('Back up project', 'fa-btn');
     backupBtn.addEventListener('click', () => void this.onBackup());
-    toolbar.append(name, tools, spacer, publishBtn, backupBtn);
+    toolbar.append(homeBtn, name, tools, spacer, publishBtn, backupBtn);
     this.main.appendChild(toolbar);
 
     // Active-tool hint bar.
